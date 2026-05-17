@@ -1,20 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { initializeApp } from "firebase/app";
-import {
-  getAuth,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-} from "firebase/auth";
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  setDoc,
-} from "firebase/firestore";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
+import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
 
-// ─── FIREBASE INIT ────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -28,7 +16,6 @@ const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
 
-// ─── QUESTION BANK ────────────────────────────────────────────────────────────
 const QUESTIONS = [
   { id: 1, q: "When you take a road test for a driver's license, which of the following is true?", opts: ["You must provide the vehicle.", "The vehicle must be in safe operating condition free of safety defects.", "You must be accompanied to the testing station by a licensed driver.", "All of the above."], ans: 3, page: 15 },
   { id: 2, q: "When you change your address you must notify the County Examiner of drivers:", opts: ["In writing, within 30 days.", "In writing, within 10 days.", "In person, within 10 days.", "By telephone, within 30 days."], ans: 0, page: 16 },
@@ -112,7 +99,6 @@ const QUESTIONS = [
   { id: 80, q: "Who may park in an accessible parking space?", opts: ["Any vehicle transporting a disabled person.", "Any vehicle that displays a disabled parking placard.", "Any vehicle that displays a placard issued to the disabled person being transported.", "Any vehicle if no regular space is available."], ans: 2, page: 29 },
 ];
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
 function initUserData() {
   return { sessions: [], questionStats: {}, streak: 0, lastStudied: null, totalAttempts: 0, createdAt: Date.now() };
 }
@@ -120,15 +106,15 @@ function initUserData() {
 function getLeitnerInterval(box) {
   return [0, 1, 3, 7, 14, 30][Math.min(box, 5)];
 }
+
 function isDue(stat) {
   if (!stat) return true;
   return (Date.now() - (stat.lastSeen || 0)) / 86400000 >= getLeitnerInterval(stat.box || 0);
 }
 
 function computePredictor(sessions) {
-  if (!sessions.length) return { current: null, trend: "none", projected: null };
+  if (!sessions.length) return { trend: "none", projected: null };
   const recent = sessions.slice(-5).map(s => (s.correct / s.total) * 100);
-  const current = recent[recent.length - 1];
   let trend = "stable";
   if (recent.length >= 2) {
     const half = Math.ceil(recent.length / 2);
@@ -140,25 +126,38 @@ function computePredictor(sessions) {
   let projected = recent.reduce((a, b) => a + b, 0) / recent.length;
   if (sessions.length >= 3) {
     const sc = sessions.map((s, i) => ({ x: i, y: (s.correct / s.total) * 100 }));
-    const n = sc.length, sx = sc.reduce((a, b) => a + b.x, 0), sy = sc.reduce((a, b) => a + b.y, 0);
-    const sxy = sc.reduce((a, b) => a + b.x * b.y, 0), sx2 = sc.reduce((a, b) => a + b.x * b.x, 0);
+    const n = sc.length;
+    const sx = sc.reduce((a, b) => a + b.x, 0);
+    const sy = sc.reduce((a, b) => a + b.y, 0);
+    const sxy = sc.reduce((a, b) => a + b.x * b.y, 0);
+    const sx2 = sc.reduce((a, b) => a + b.x * b.x, 0);
     const slope = (n * sxy - sx * sy) / (n * sx2 - sx * sx);
     projected = Math.min(100, Math.max(0, sy / n + slope * 2));
   }
-  return { current, trend, projected, sessions: sessions.length };
+  return { trend, projected };
 }
 
 function selectQuestions(mode, stats, count = 10) {
   switch (mode) {
-    case "random": return [...QUESTIONS].sort(() => Math.random() - 0.5).slice(0, count);
-    case "growth": return [...QUESTIONS].map(q => ({ q, acc: stats[q.id]?.attempts > 0 ? stats[q.id].correct / stats[q.id].attempts : 0.5 })).sort((a, b) => a.acc - b.acc).slice(0, count).map(x => x.q);
-    case "easier": return [...QUESTIONS].map(q => ({ q, acc: stats[q.id]?.attempts > 0 ? stats[q.id].correct / stats[q.id].attempts : 0.5 })).sort((a, b) => b.acc - a.acc).slice(0, count).map(x => x.q);
-    case "spaced": { const due = QUESTIONS.filter(q => isDue(stats[q.id])); return (due.length ? due : QUESTIONS).sort(() => Math.random() - 0.5).slice(0, count); }
-    default: return QUESTIONS.slice(0, count);
+    case "random":
+      return [...QUESTIONS].sort(() => Math.random() - 0.5).slice(0, count);
+    case "growth":
+      return [...QUESTIONS]
+        .map(q => ({ q, acc: stats[q.id]?.attempts > 0 ? stats[q.id].correct / stats[q.id].attempts : 0.5 }))
+        .sort((a, b) => a.acc - b.acc).slice(0, count).map(x => x.q);
+    case "easier":
+      return [...QUESTIONS]
+        .map(q => ({ q, acc: stats[q.id]?.attempts > 0 ? stats[q.id].correct / stats[q.id].attempts : 0.5 }))
+        .sort((a, b) => b.acc - a.acc).slice(0, count).map(x => x.q);
+    case "spaced": {
+      const due = QUESTIONS.filter(q => isDue(stats[q.id]));
+      return (due.length ? due : QUESTIONS).sort(() => Math.random() - 0.5).slice(0, count);
+    }
+    default:
+      return QUESTIONS.slice(0, count);
   }
 }
 
-// ─── FIRESTORE SYNC ───────────────────────────────────────────────────────────
 async function loadFromFirestore(uid) {
   try {
     const snap = await getDoc(doc(db, "users", uid));
@@ -172,148 +171,181 @@ async function saveToFirestore(uid, data) {
   } catch (e) { console.error("Save error:", e); }
 }
 
-// ─── CSS ──────────────────────────────────────────────────────────────────────
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
     --ocean: #0a2240; --ocean-mid: #0e3460; --ocean-light: #1a5276;
-    --sand: #f5e6c8; --sand-light: #fdf6e9; --coral: #e8622a; --coral-light: #f08050;
+    --sand: #f5e6c8; --sand-light: #fdf6e9; --coral: #e8622a;
     --palm: #2e7d32; --text: #1a1a1a; --muted: #6b7c93;
     --success: #27ae60; --danger: #c0392b; --warning: #f39c12;
-    --radius: 12px; --shadow: 0 4px 24px rgba(10,34,64,0.18); --transition: 0.2s cubic-bezier(0.4,0,0.2,1);
+    --radius: 12px; --shadow: 0 4px 24px rgba(10,34,64,0.18);
+    --transition: 0.2s cubic-bezier(0.4,0,0.2,1);
+    --nav-h: 64px;
   }
-  html, body, #root { height: 100%; margin: 0; padding: 0; }
-  body { font-family: 'DM Mono', monospace; background: var(--sand-light); color: var(--text); display: flex; flex-direction: column; min-height: 100vh; }
-  #root { display: flex; flex-direction: column; flex: 1; }
-  .page-wrap { flex: 1; overflow-y: auto; padding-bottom: 80px; }
+
+  /* KEY FIX: full height flex column so nav stays at bottom without overlapping */
+  html { height: 100%; }
+  body { height: 100%; font-family: 'DM Mono', monospace; background: var(--sand-light); color: var(--text); display: flex; flex-direction: column; }
+  #root { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  .shell { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .scroll-area { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .app { max-width: 900px; margin: 0 auto; padding: 0 16px 40px; }
-  .header { background: var(--ocean); color: white; padding: 0 16px; position: sticky; top: 0; z-index: 100; border-bottom: 3px solid var(--coral); }
+
+  .header { background: var(--ocean); color: white; padding: 0 16px; border-bottom: 3px solid var(--coral); flex-shrink: 0; }
   .header-inner { max-width: 900px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; height: 60px; }
-  .header-logo { font-family: 'DM Serif Display', serif; font-size: 1.2rem; display: flex; align-items: center; gap: 8px; }
+  .header-logo { font-family: 'DM Serif Display', serif; font-size: 1.1rem; display: flex; align-items: center; gap: 6px; }
   .header-logo span { color: var(--coral); }
-  .header-right { display: flex; align-items: center; gap: 10px; }
-  .header-streak { font-size: 0.75rem; background: rgba(255,255,255,0.1); border-radius: 20px; padding: 4px 12px; color: var(--sand); }
-  .signout-btn { background: transparent; border: 1px solid rgba(255,255,255,0.3); color: rgba(245,230,200,0.7); border-radius: 6px; padding: 4px 10px; font-family: 'DM Mono', monospace; font-size: 0.7rem; cursor: pointer; transition: all var(--transition); }
+  .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .header-streak { font-size: 0.7rem; background: rgba(255,255,255,0.1); border-radius: 20px; padding: 3px 10px; color: var(--sand); }
+  .signout-btn { background: transparent; border: 1px solid rgba(255,255,255,0.3); color: rgba(245,230,200,0.7); border-radius: 6px; padding: 3px 8px; font-family: 'DM Mono', monospace; font-size: 0.68rem; cursor: pointer; }
   .signout-btn:hover { border-color: var(--coral); color: var(--coral); }
-  .hero { background: var(--ocean); padding: 32px 0 0; margin-bottom: 32px; position: relative; overflow: hidden; }
-  .hero-content { padding: 0 16px 40px; max-width: 900px; margin: 0 auto; position: relative; z-index: 2; }
-  .hero h1 { font-family: 'DM Serif Display', serif; font-size: clamp(1.8rem, 5vw, 2.8rem); color: var(--sand); line-height: 1.15; margin-bottom: 8px; }
+  .sync-indicator { font-size: 0.68rem; color: rgba(245,230,200,0.6); display: flex; align-items: center; gap: 4px; }
+  .sync-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  .hero { background: var(--ocean); padding: 28px 0 0; position: relative; overflow: hidden; flex-shrink: 0; }
+  .hero-content { padding: 0 16px 36px; max-width: 900px; margin: 0 auto; position: relative; z-index: 2; }
+  .hero h1 { font-family: 'DM Serif Display', serif; font-size: clamp(1.6rem, 4vw, 2.4rem); color: var(--sand); line-height: 1.15; margin-bottom: 6px; }
   .hero h1 em { color: var(--coral); font-style: italic; }
-  .hero p { color: rgba(245,230,200,0.7); font-size: 0.85rem; }
-  .hero-wave { position: absolute; bottom: 0; left: 0; right: 0; height: 48px; overflow: hidden; }
+  .hero p { color: rgba(245,230,200,0.7); font-size: 0.8rem; }
+  .hero-wave { position: absolute; bottom: 0; left: 0; right: 0; height: 40px; }
   .hero-wave svg { width: 100%; height: 100%; display: block; }
-  .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 28px; }
-  .stat-card { background: white; border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); border-left: 4px solid var(--ocean-light); transition: transform var(--transition); }
-  .stat-card:hover { transform: translateY(-2px); }
-  .stat-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
-  .stat-value { font-family: 'DM Serif Display', serif; font-size: 1.6rem; color: var(--ocean); }
-  .stat-sub { font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
-  .predictor-card { background: var(--ocean); color: white; border-radius: var(--radius); padding: 20px 24px; margin-bottom: 28px; box-shadow: var(--shadow); }
-  .predictor-title { font-family: 'DM Serif Display', serif; font-size: 1rem; color: var(--sand); margin-bottom: 12px; }
-  .predictor-bars { display: flex; gap: 16px; align-items: flex-end; margin-bottom: 12px; height: 80px; }
-  .pred-bar-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
-  .pred-bar { width: 100%; border-radius: 4px 4px 0 0; transition: height 0.6s ease; }
-  .pred-bar-label { font-size: 0.65rem; color: rgba(245,230,200,0.6); }
-  .pred-bar-val { font-size: 0.75rem; color: var(--sand); }
-  .pred-trend { font-size: 0.75rem; color: rgba(245,230,200,0.7); display: flex; align-items: center; gap: 6px; }
-  .mode-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 28px; }
-  .mode-card { background: white; border-radius: var(--radius); padding: 20px 16px; cursor: pointer; border: 2px solid transparent; box-shadow: var(--shadow); transition: all var(--transition); text-align: center; }
-  .mode-card:hover { border-color: var(--ocean-light); transform: translateY(-3px); }
+
+  /* BOTTOM NAV — flex item, never overlaps */
+  .bottom-nav { background: var(--ocean); display: flex; justify-content: space-around; align-items: center; height: var(--nav-h); border-top: 2px solid var(--coral); flex-shrink: 0; }
+  .bn-item { display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; padding: 8px 20px; border-radius: 8px; color: rgba(245,230,200,0.45); font-size: 0.58rem; letter-spacing: 0.04em; text-transform: uppercase; transition: color var(--transition); }
+  .bn-item:hover { color: rgba(245,230,200,0.75); }
+  .bn-item.active { color: var(--sand); }
+  .bn-icon { font-size: 1.2rem; }
+
+  .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 24px; padding-top: 24px; }
+  .stat-card { background: white; border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); border-left: 4px solid var(--ocean-light); }
+  .stat-label { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 3px; }
+  .stat-value { font-family: 'DM Serif Display', serif; font-size: 1.5rem; color: var(--ocean); }
+  .stat-sub { font-size: 0.65rem; color: var(--muted); margin-top: 2px; }
+
+  .predictor-card { background: var(--ocean); color: white; border-radius: var(--radius); padding: 18px 20px; margin-bottom: 24px; box-shadow: var(--shadow); }
+  .predictor-title { font-family: 'DM Serif Display', serif; font-size: 0.95rem; color: var(--sand); margin-bottom: 10px; }
+  .predictor-bars { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 10px; height: 70px; }
+  .pred-bar-wrap { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1; }
+  .pred-bar { width: 100%; border-radius: 4px 4px 0 0; }
+  .pred-bar-label { font-size: 0.6rem; color: rgba(245,230,200,0.55); }
+  .pred-bar-val { font-size: 0.7rem; color: var(--sand); }
+  .pred-trend { font-size: 0.72rem; color: rgba(245,230,200,0.7); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+  .section-title { font-family: 'DM Serif Display', serif; font-size: 1.1rem; color: var(--ocean); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: #e8dcc8; }
+
+  .mode-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 24px; }
+  .mode-card { background: white; border-radius: var(--radius); padding: 18px 14px; cursor: pointer; border: 2px solid transparent; box-shadow: var(--shadow); transition: all var(--transition); text-align: center; }
+  .mode-card:hover { border-color: var(--ocean-light); transform: translateY(-2px); }
   .mode-card.selected { border-color: var(--coral); background: var(--ocean); color: white; }
   .mode-card.selected .mode-desc { color: rgba(245,230,200,0.7); }
-  .mode-icon { font-size: 1.8rem; margin-bottom: 8px; }
-  .mode-name { font-family: 'DM Serif Display', serif; font-size: 1rem; margin-bottom: 4px; }
-  .mode-desc { font-size: 0.72rem; color: var(--muted); line-height: 1.4; }
-  .quiz-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .mode-icon { font-size: 1.6rem; margin-bottom: 6px; }
+  .mode-name { font-family: 'DM Serif Display', serif; font-size: 0.95rem; margin-bottom: 4px; }
+  .mode-desc { font-size: 0.68rem; color: var(--muted); line-height: 1.4; }
+
+  .start-quiz-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .q-count-select { border: 2px solid #e8dcc8; border-radius: 8px; padding: 10px 14px; font-family: 'DM Mono', monospace; font-size: 0.82rem; background: white; color: var(--ocean); cursor: pointer; outline: none; }
+  .start-btn { background: var(--ocean); color: white; border: none; border-radius: 8px; padding: 12px 28px; font-family: 'DM Mono', monospace; font-size: 0.85rem; cursor: pointer; transition: background var(--transition); }
+  .start-btn:hover { background: var(--ocean-mid); }
+
+  .quiz-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-top: 20px; }
   .quiz-progress { display: flex; gap: 4px; flex-wrap: wrap; }
-  .qp-dot { width: 10px; height: 10px; border-radius: 50%; background: #ddd; transition: background var(--transition); }
+  .qp-dot { width: 10px; height: 10px; border-radius: 50%; background: #ddd; }
   .qp-dot.correct { background: var(--success); }
   .qp-dot.wrong { background: var(--danger); }
   .qp-dot.current { background: var(--coral); transform: scale(1.3); }
-  .question-card { background: white; border-radius: var(--radius); padding: 28px 24px; box-shadow: var(--shadow); margin-bottom: 16px; animation: slideUp 0.3s ease; }
-  @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-  .question-num { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
-  .question-text { font-family: 'DM Serif Display', serif; font-size: 1.15rem; line-height: 1.4; color: var(--ocean); margin-bottom: 20px; }
-  .options { display: flex; flex-direction: column; gap: 10px; }
-  .option-btn { background: white; border: 2px solid #d0c8b8; border-radius: 8px; padding: 14px 16px; text-align: left; font-family: 'DM Mono', monospace; font-size: 0.83rem; cursor: pointer; transition: all var(--transition); line-height: 1.4; display: flex; gap: 12px; align-items: flex-start; color: #1a1a1a; }
-  .option-btn:hover:not(:disabled) { border-color: var(--ocean-light); background: var(--sand); color: #1a1a1a; }
+
+  .question-card { background: white; border-radius: var(--radius); padding: 24px 20px; box-shadow: var(--shadow); margin-bottom: 14px; animation: slideUp 0.3s ease; }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  .question-num { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .question-text { font-family: 'DM Serif Display', serif; font-size: 1.1rem; line-height: 1.4; color: var(--ocean); margin-bottom: 18px; }
+  .options { display: flex; flex-direction: column; gap: 8px; }
+
+  .option-btn { background: white; border: 2px solid #d4cabb; border-radius: 8px; padding: 13px 16px; text-align: left; font-family: 'DM Mono', monospace; font-size: 0.82rem; cursor: pointer; transition: all var(--transition); line-height: 1.4; display: flex; gap: 10px; align-items: flex-start; color: #1a1a1a; width: 100%; }
+  .option-btn:hover:not(:disabled) { border-color: var(--ocean-light); background: #f0f4f8; color: #1a1a1a; }
   .option-btn.correct { background: #d4edda; border-color: var(--success); color: #155724; }
   .option-btn.wrong { background: #f8d7da; border-color: var(--danger); color: #721c24; }
   .option-btn:disabled { cursor: default; }
-  .opt-letter { font-weight: 700; min-width: 22px; color: var(--ocean); }
+  .opt-letter { font-weight: 700; min-width: 20px; color: var(--ocean); flex-shrink: 0; }
   .option-btn.correct .opt-letter, .option-btn.wrong .opt-letter { color: inherit; }
-  .feedback-bar { border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 0.82rem; display: flex; align-items: center; gap: 10px; animation: slideUp 0.2s ease; }
+
+  .feedback-bar { border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; font-size: 0.8rem; display: flex; align-items: center; gap: 8px; animation: slideUp 0.2s ease; }
   .feedback-bar.correct { background: #d4edda; color: #155724; border-left: 4px solid var(--success); }
   .feedback-bar.wrong { background: #f8d7da; color: #721c24; border-left: 4px solid var(--danger); }
-  .next-btn { background: var(--ocean); color: white; border: none; border-radius: 8px; padding: 12px 28px; font-family: 'DM Mono', monospace; font-size: 0.85rem; cursor: pointer; transition: background var(--transition); letter-spacing: 0.04em; }
+  .next-btn { background: var(--ocean); color: white; border: none; border-radius: 8px; padding: 12px 26px; font-family: 'DM Mono', monospace; font-size: 0.83rem; cursor: pointer; transition: background var(--transition); }
   .next-btn:hover { background: var(--ocean-mid); }
-  .results-card { background: white; border-radius: var(--radius); padding: 32px 24px; box-shadow: var(--shadow); text-align: center; animation: slideUp 0.4s ease; }
-  .results-score { font-family: 'DM Serif Display', serif; font-size: 4rem; color: var(--ocean); line-height: 1; margin-bottom: 4px; }
-  .results-pass { color: var(--success); font-size: 1.1rem; margin-bottom: 4px; }
-  .results-fail { color: var(--danger); font-size: 1.1rem; margin-bottom: 4px; }
-  .results-meta { color: var(--muted); font-size: 0.8rem; margin-bottom: 24px; }
-  .results-breakdown { display: flex; gap: 16px; justify-content: center; margin-bottom: 24px; flex-wrap: wrap; }
-  .res-stat { text-align: center; }
-  .res-stat-val { font-family: 'DM Serif Display', serif; font-size: 1.6rem; }
-  .res-stat-label { font-size: 0.7rem; color: var(--muted); }
+
+  .results-card { background: white; border-radius: var(--radius); padding: 28px 20px; box-shadow: var(--shadow); text-align: center; animation: slideUp 0.4s ease; margin-top: 20px; }
+  .results-score { font-family: 'DM Serif Display', serif; font-size: 3.5rem; color: var(--ocean); line-height: 1; margin-bottom: 4px; }
+  .results-pass { color: var(--success); font-size: 1rem; margin-bottom: 4px; }
+  .results-fail { color: var(--danger); font-size: 1rem; margin-bottom: 4px; }
+  .results-meta { color: var(--muted); font-size: 0.75rem; margin-bottom: 20px; }
+  .results-breakdown { display: flex; gap: 16px; justify-content: center; margin-bottom: 20px; }
+  .res-stat-val { font-family: 'DM Serif Display', serif; font-size: 1.5rem; }
+  .res-stat-label { font-size: 0.65rem; color: var(--muted); }
   .res-correct { color: var(--success); }
   .res-wrong { color: var(--danger); }
-  .perf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-  .perf-item { background: white; border-radius: 8px; padding: 14px 16px; box-shadow: 0 2px 8px rgba(10,34,64,0.08); }
-  .perf-q { font-size: 0.78rem; color: var(--ocean); margin-bottom: 8px; font-family: 'DM Serif Display', serif; line-height: 1.3; }
-  .perf-bar-wrap { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
-  .perf-bar-fill { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
-  .perf-stats { display: flex; justify-content: space-between; font-size: 0.68rem; color: var(--muted); }
-  .leitner-boxes { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
-  .lbox { flex: 1; min-width: 80px; background: white; border-radius: 8px; padding: 12px 8px; text-align: center; box-shadow: 0 2px 8px rgba(10,34,64,0.08); border-top: 4px solid var(--ocean-light); }
-  .lbox-num { font-family: 'DM Serif Display', serif; font-size: 1.4rem; color: var(--ocean); }
-  .lbox-label { font-size: 0.65rem; color: var(--muted); }
-  .section-title { font-family: 'DM Serif Display', serif; font-size: 1.2rem; color: var(--ocean); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-  .section-title::after { content: ''; flex: 1; height: 1px; background: #e8dcc8; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 0.68rem; font-weight: 500; }
+  .result-btns { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; justify-content: center; }
+
+  .missed-review { text-align: left; margin-top: 16px; }
+  .missed-q { background: #f8d7da; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; font-size: 0.78rem; }
+  .missed-q strong { color: #721c24; display: block; margin-bottom: 4px; }
+  .missed-correct { color: #155724; }
+  .missed-wrong { color: #721c24; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 0.65rem; font-weight: 500; }
   .badge-pass { background: #d4edda; color: #155724; }
   .badge-fail { background: #f8d7da; color: #721c24; }
-  .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); }
-  .empty-state .es-icon { font-size: 3rem; margin-bottom: 12px; }
-  .empty-state p { font-size: 0.85rem; line-height: 1.6; }
-  .start-quiz-section { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 120px; }
-  .q-count-select { border: 2px solid #e8dcc8; border-radius: 8px; padding: 10px 14px; font-family: 'DM Mono', monospace; font-size: 0.82rem; background: white; color: var(--ocean); cursor: pointer; outline: none; }
-  .bottom-nav { position: sticky; bottom: 0; left: 0; right: 0; background: var(--ocean); display: flex; justify-content: space-around; align-items: center; height: 60px; border-top: 2px solid var(--coral); z-index: 10; flex-shrink: 0; }
-  .bn-item { display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; padding: 8px 16px; border-radius: 8px; transition: background var(--transition); color: rgba(245,230,200,0.5); font-size: 0.6rem; letter-spacing: 0.04em; text-transform: uppercase; }
-  .bn-item:hover { background: rgba(255,255,255,0.08); }
-  .bn-item.active { color: var(--sand); }
-  .bn-item .bn-icon { font-size: 1.2rem; }
-  .history-chart { background: white; border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); margin-bottom: 20px; }
-  .hc-title { font-family: 'DM Serif Display', serif; font-size: 1rem; color: var(--ocean); margin-bottom: 16px; }
-  .hc-bars { display: flex; align-items: flex-end; gap: 6px; height: 100px; }
-  .hc-bar-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
-  .hc-bar { width: 100%; border-radius: 4px 4px 0 0; min-height: 4px; }
-  .hc-bar-num { font-size: 0.6rem; color: var(--muted); }
 
-  /* AUTH STYLES */
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); }
+  .empty-state .es-icon { font-size: 2.8rem; margin-bottom: 10px; }
+  .empty-state p { font-size: 0.82rem; line-height: 1.6; }
+
+  .history-chart { background: white; border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); margin-bottom: 18px; }
+  .hc-title { font-family: 'DM Serif Display', serif; font-size: 0.95rem; color: var(--ocean); margin-bottom: 14px; }
+  .hc-bars { display: flex; align-items: flex-end; gap: 5px; height: 90px; }
+  .hc-bar-col { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1; }
+  .hc-bar { width: 100%; border-radius: 3px 3px 0 0; min-height: 3px; }
+  .hc-bar-num { font-size: 0.58rem; color: var(--muted); }
+
+  .leitner-boxes { display: flex; gap: 6px; margin-bottom: 18px; flex-wrap: wrap; }
+  .lbox { flex: 1; min-width: 70px; background: white; border-radius: 8px; padding: 10px 6px; text-align: center; box-shadow: 0 2px 8px rgba(10,34,64,0.08); border-top: 4px solid var(--ocean-light); }
+  .lbox-num { font-family: 'DM Serif Display', serif; font-size: 1.3rem; color: var(--ocean); }
+  .lbox-label { font-size: 0.6rem; color: var(--muted); }
+
+  .perf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+  .perf-item { background: white; border-radius: 8px; padding: 12px 14px; box-shadow: 0 2px 8px rgba(10,34,64,0.08); }
+  .perf-q { font-size: 0.75rem; color: var(--ocean); margin-bottom: 6px; font-family: 'DM Serif Display', serif; line-height: 1.3; }
+  .perf-bar-wrap { height: 5px; background: #eee; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+  .perf-bar-fill { height: 100%; border-radius: 3px; }
+  .perf-stats { display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--muted); }
+
+  .session-item { background: white; border-radius: 8px; padding: 11px 14px; box-shadow: 0 2px 8px rgba(10,34,64,0.08); display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
+  .session-title { font-size: 0.76rem; font-family: 'DM Serif Display', serif; color: var(--ocean); }
+  .session-meta { font-size: 0.65rem; color: var(--muted); margin-top: 2px; }
+
   .auth-wrap { min-height: 100vh; background: var(--ocean); display: flex; align-items: center; justify-content: center; padding: 20px; }
-  .auth-card { background: white; border-radius: var(--radius); padding: 36px 32px; width: 100%; max-width: 420px; box-shadow: var(--shadow); }
-  .auth-logo { font-family: 'DM Serif Display', serif; font-size: 1.5rem; color: var(--ocean); margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  .auth-card { background: white; border-radius: var(--radius); padding: 32px 28px; width: 100%; max-width: 400px; box-shadow: var(--shadow); }
+  .auth-logo { font-family: 'DM Serif Display', serif; font-size: 1.4rem; color: var(--ocean); margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
   .auth-logo span { color: var(--coral); }
-  .auth-sub { font-size: 0.78rem; color: var(--muted); margin-bottom: 28px; line-height: 1.5; }
-  .auth-tabs { display: flex; gap: 4px; background: var(--sand-light); border-radius: 8px; padding: 4px; margin-bottom: 24px; }
-  .auth-tab { flex: 1; text-align: center; padding: 8px; border-radius: 6px; font-family: 'DM Mono', monospace; font-size: 0.8rem; cursor: pointer; border: none; background: transparent; color: var(--muted); transition: all var(--transition); }
+  .auth-sub { font-size: 0.76rem; color: var(--muted); margin-bottom: 24px; line-height: 1.5; }
+  .auth-tabs { display: flex; gap: 4px; background: var(--sand-light); border-radius: 8px; padding: 4px; margin-bottom: 20px; }
+  .auth-tab { flex: 1; text-align: center; padding: 8px; border-radius: 6px; font-family: 'DM Mono', monospace; font-size: 0.78rem; cursor: pointer; border: none; background: transparent; color: var(--muted); transition: all var(--transition); }
   .auth-tab.active { background: white; color: var(--ocean); box-shadow: 0 2px 8px rgba(10,34,64,0.1); }
-  .input-group { margin-bottom: 14px; }
-  .input-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; display: block; }
-  .input-field { width: 100%; border: 2px solid #e8dcc8; border-radius: 8px; padding: 10px 14px; font-family: 'DM Mono', monospace; font-size: 0.85rem; outline: none; transition: border-color var(--transition); background: var(--sand-light); }
+  .input-group { margin-bottom: 12px; }
+  .input-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; display: block; }
+  .input-field { width: 100%; border: 2px solid #e8dcc8; border-radius: 8px; padding: 10px 13px; font-family: 'DM Mono', monospace; font-size: 0.83rem; outline: none; transition: border-color var(--transition); background: var(--sand-light); color: #1a1a1a; }
   .input-field:focus { border-color: var(--ocean-light); }
-  .btn-primary { background: var(--ocean); color: white; border: none; border-radius: 8px; padding: 12px 24px; font-family: 'DM Mono', monospace; font-size: 0.85rem; cursor: pointer; width: 100%; transition: background var(--transition); letter-spacing: 0.04em; margin-bottom: 10px; }
+  .btn-primary { background: var(--ocean); color: white; border: none; border-radius: 8px; padding: 12px 24px; font-family: 'DM Mono', monospace; font-size: 0.83rem; cursor: pointer; width: 100%; transition: background var(--transition); margin-bottom: 8px; }
   .btn-primary:hover { background: var(--ocean-mid); }
   .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
-  .auth-error { background: #f8d7da; color: #721c24; border-radius: 8px; padding: 10px 14px; font-size: 0.78rem; margin-bottom: 14px; border-left: 3px solid var(--danger); }
-  .sync-indicator { font-size: 0.7rem; color: rgba(245,230,200,0.6); display: flex; align-items: center; gap: 4px; }
-  .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+  .auth-error { background: #f8d7da; color: #721c24; border-radius: 8px; padding: 9px 13px; font-size: 0.76rem; margin-bottom: 12px; border-left: 3px solid var(--danger); }
 `;
 
-// ─── AUTH SCREEN ──────────────────────────────────────────────────────────────
-function AuthScreen({ onAuth }) {
+function AuthScreen() {
   const [authTab, setAuthTab] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -321,7 +353,8 @@ function AuthScreen({ onAuth }) {
   const [error, setError] = useState("");
 
   const handle = async () => {
-    setError(""); setLoading(true);
+    setError("");
+    setLoading(true);
     try {
       if (authTab === "signup") {
         await createUserWithEmailAndPassword(auth, email, password);
@@ -348,8 +381,8 @@ function AuthScreen({ onAuth }) {
         <div className="auth-logo">🌊 Hawaii <span>Permit Prep</span></div>
         <div className="auth-sub">Sign in to sync your progress across all your devices.</div>
         <div className="auth-tabs">
-          <button className={`auth-tab ${authTab === "signin" ? "active" : ""}`} onClick={() => { setAuthTab("signin"); setError(""); }}>Sign In</button>
-          <button className={`auth-tab ${authTab === "signup" ? "active" : ""}`} onClick={() => { setAuthTab("signup"); setError(""); }}>Create Account</button>
+          <button className={"auth-tab" + (authTab === "signin" ? " active" : "")} onClick={() => { setAuthTab("signin"); setError(""); }}>Sign In</button>
+          <button className={"auth-tab" + (authTab === "signup" ? " active" : "")} onClick={() => { setAuthTab("signup"); setError(""); }}>Create Account</button>
         </div>
         {error && <div className="auth-error">{error}</div>}
         <div className="input-group">
@@ -368,7 +401,6 @@ function AuthScreen({ onAuth }) {
   );
 }
 
-// ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -379,7 +411,6 @@ export default function App() {
   const [selectedMode, setSelectedMode] = useState("random");
   const [quizCount, setQuizCount] = useState(10);
 
-  // Auth listener
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
       setUser(u);
@@ -393,11 +424,10 @@ export default function App() {
     });
   }, []);
 
-  // Auto-save to Firestore on data change
   useEffect(() => {
     if (user && !authLoading) {
-      const timer = setTimeout(() => saveToFirestore(user.uid, userData), 1500);
-      return () => clearTimeout(timer);
+      const t = setTimeout(() => saveToFirestore(user.uid, userData), 1500);
+      return () => clearTimeout(t);
     }
   }, [userData, user, authLoading]);
 
@@ -441,8 +471,12 @@ export default function App() {
   };
 
   const predictor = computePredictor(userData.sessions);
-  const avgScore = userData.sessions.length > 0 ? Math.round(userData.sessions.reduce((a, b) => a + b.pct, 0) / userData.sessions.length) : null;
-  const leitnerCounts = [0, 1, 2, 3, 4, 5].map(box => Object.values(userData.questionStats).filter(s => (s.box || 0) === box).length);
+  const avgScore = userData.sessions.length > 0
+    ? Math.round(userData.sessions.reduce((a, b) => a + b.pct, 0) / userData.sessions.length)
+    : null;
+  const leitnerCounts = [0, 1, 2, 3, 4, 5].map(box =>
+    Object.values(userData.questionStats).filter(s => (s.box || 0) === box).length
+  );
 
   if (authLoading) return (
     <>
@@ -461,294 +495,341 @@ export default function App() {
     </>
   );
 
+  const navItems = [
+    { id: "home", icon: "🏠", label: "Home" },
+    { id: "study", icon: "📖", label: "Study" },
+    { id: "performance", icon: "📊", label: "Stats" },
+  ];
+
   return (
     <>
       <style>{css}</style>
-      <div style={{ background: "var(--ocean)" }}>
-        <div className="header">
-          <div className="header-inner">
-            <div className="header-logo">🌊 Hawaii <span>Permit Prep</span></div>
-            <div className="header-right">
-              <div className="sync-indicator">
-                <div className="sync-dot" style={{ background: syncing ? "var(--warning)" : "var(--success)" }} />
-                {syncing ? "Syncing..." : "Synced"}
+      <div className="shell">
+
+        {/* ── SCROLL AREA ── */}
+        <div className="scroll-area">
+
+          {/* Header */}
+          <div className="header">
+            <div className="header-inner">
+              <div className="header-logo">🌊 Hawaii <span>Permit Prep</span></div>
+              <div className="header-right">
+                <div className="sync-indicator">
+                  <div className="sync-dot" style={{ background: syncing ? "#f39c12" : "#27ae60" }} />
+                  {syncing ? "Syncing…" : "Synced"}
+                </div>
+                <div className="header-streak">🔥 {userData.streak} day streak</div>
+                <button className="signout-btn" onClick={() => signOut(auth)}>Sign out</button>
               </div>
-              <div className="header-streak">🔥 {userData.streak} day streak</div>
-              <button className="signout-btn" onClick={() => signOut(auth)}>Sign out</button>
             </div>
           </div>
-        </div>
-        <div className="hero">
-          <div className="hero-content">
-            <h1>Study smart,<br />drive with <em>aloha.</em></h1>
-            <p>Signed in as {user.email}</p>
-          </div>
-          <div className="hero-wave">
-            <svg viewBox="0 0 1200 48" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M0,48 L0,24 C150,8 300,40 450,28 C600,16 750,44 900,32 C1050,20 1150,36 1200,28 L1200,48 Z" fill="#fdf6e9" />
-            </svg>
-          </div>
-        </div>
-      </div>
 
-      <div className="page-wrap"><div className="app">
-        <div className="stats-row">
-          {[
-            { label: "Sessions", value: userData.sessions.length, sub: "total quizzes taken" },
-            { label: "Avg Score", value: avgScore !== null ? `${avgScore}%` : "—", sub: "across all sessions" },
-            { label: "Questions", value: userData.totalAttempts, sub: "total attempts" },
-            { label: "Mastered", value: leitnerCounts[4] + leitnerCounts[5], sub: `of ${QUESTIONS.length} questions` },
-          ].map((s, i) => (
-            <div className="stat-card" key={i}>
-              <div className="stat-label">{s.label}</div>
-              <div className="stat-value">{s.value}</div>
-              <div className="stat-sub">{s.sub}</div>
+          {/* Hero */}
+          <div className="hero">
+            <div className="hero-content">
+              <h1>Study smart,<br />drive with <em>aloha.</em></h1>
+              <p>Signed in as {user.email}</p>
             </div>
-          ))}
-        </div>
+            <div className="hero-wave">
+              <svg viewBox="0 0 1200 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M0,40 L0,20 C150,6 300,34 450,22 C600,10 750,38 900,26 C1050,14 1150,30 1200,22 L1200,40 Z" fill="#fdf6e9" />
+              </svg>
+            </div>
+          </div>
 
-        {userData.sessions.length > 0 && (
-          <div className="predictor-card">
-            <div className="predictor-title">📈 Passing Predictor</div>
-            <div className="predictor-bars">
-              {userData.sessions.slice(-5).map((s, i) => (
-                <div className="pred-bar-wrap" key={i}>
-                  <div className="pred-bar-val">{s.pct}%</div>
-                  <div className="pred-bar" style={{ height: `${Math.round((s.pct / 100) * 70)}px`, background: s.pct >= 70 ? "var(--success)" : s.pct >= 50 ? "var(--warning)" : "var(--danger)" }} />
-                  <div className="pred-bar-label">#{userData.sessions.length - Math.min(5, userData.sessions.length) + i + 1}</div>
+          {/* Main content */}
+          <div className="app">
+
+            {/* Stats */}
+            <div className="stats-row">
+              {[
+                { label: "Sessions", value: userData.sessions.length, sub: "total quizzes" },
+                { label: "Avg Score", value: avgScore !== null ? avgScore + "%" : "—", sub: "all sessions" },
+                { label: "Attempts", value: userData.totalAttempts, sub: "total questions" },
+                { label: "Mastered", value: leitnerCounts[4] + leitnerCounts[5], sub: "of " + QUESTIONS.length },
+              ].map((s, i) => (
+                <div className="stat-card" key={i}>
+                  <div className="stat-label">{s.label}</div>
+                  <div className="stat-value">{s.value}</div>
+                  <div className="stat-sub">{s.sub}</div>
                 </div>
               ))}
-              {predictor.projected !== null && (
-                <div className="pred-bar-wrap">
-                  <div className="pred-bar-val" style={{ color: "var(--coral)" }}>{Math.round(predictor.projected)}%</div>
-                  <div className="pred-bar" style={{ height: `${Math.round((predictor.projected / 100) * 70)}px`, background: "rgba(232,98,42,0.5)", border: "2px dashed var(--coral)" }} />
-                  <div className="pred-bar-label" style={{ color: "var(--coral)" }}>projected</div>
+            </div>
+
+            {/* Predictor */}
+            {userData.sessions.length > 0 && (
+              <div className="predictor-card">
+                <div className="predictor-title">📈 Passing Predictor</div>
+                <div className="predictor-bars">
+                  {userData.sessions.slice(-5).map((s, i) => (
+                    <div className="pred-bar-wrap" key={i}>
+                      <div className="pred-bar-val">{s.pct}%</div>
+                      <div className="pred-bar" style={{ height: Math.round((s.pct / 100) * 60) + "px", background: s.pct >= 70 ? "#27ae60" : s.pct >= 50 ? "#f39c12" : "#c0392b" }} />
+                      <div className="pred-bar-label">#{userData.sessions.length - Math.min(5, userData.sessions.length) + i + 1}</div>
+                    </div>
+                  ))}
+                  {predictor.projected !== null && (
+                    <div className="pred-bar-wrap">
+                      <div className="pred-bar-val" style={{ color: "#e8622a" }}>{Math.round(predictor.projected)}%</div>
+                      <div className="pred-bar" style={{ height: Math.round((predictor.projected / 100) * 60) + "px", background: "rgba(232,98,42,0.45)", border: "2px dashed #e8622a" }} />
+                      <div className="pred-bar-label" style={{ color: "#e8622a" }}>next</div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            <div className="pred-trend">
-              {predictor.trend === "improving" && "📈 Score improving — keep it up!"}
-              {predictor.trend === "declining" && "📉 Try Growth mode to target weak spots."}
-              {predictor.trend === "stable" && "➡️ Stable — push harder with Growth mode."}
-              {predictor.projected !== null && (
-                <span style={{ marginLeft: "auto" }}>
-                  <span className={`badge ${predictor.projected >= 70 ? "badge-pass" : "badge-fail"}`}>
-                    {predictor.projected >= 70 ? "On track to pass" : "Needs improvement"}
-                  </span>
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div className="bottom-nav">
-          {[{ id: "home", icon: "🏠", label: "Home" }, { id: "study", icon: "📖", label: "Study" }, { id: "performance", icon: "📊", label: "Stats" }].map(t => (
-            <div key={t.id} className={`bn-item ${tab === t.id || (t.id === "study" && tab === "quiz") ? "active" : ""}`} onClick={() => { if (t.id !== "quiz") { setTab(t.id); } }}>
-              <span className="bn-icon">{t.icon}</span>{t.label}
-            </div>
-          ))}
-        </div>
-
-        {/* HOME */}
-        {tab === "home" && (
-          <>
-            {userData.sessions.length === 0 ? (
-              <div className="empty-state">
-                <div className="es-icon">🌺</div>
-                <p>Welcome! Head to <strong>Study</strong> to take your first quiz. Your stats and progress will appear here — and sync across all your devices automatically.</p>
+                <div className="pred-trend">
+                  {predictor.trend === "improving" && "📈 Improving — keep going!"}
+                  {predictor.trend === "declining" && "📉 Try Growth mode to target weak spots."}
+                  {predictor.trend === "stable" && "➡️ Stable — push with Growth mode."}
+                  {predictor.projected !== null && (
+                    <span style={{ marginLeft: "auto" }}>
+                      <span className={"badge " + (predictor.projected >= 70 ? "badge-pass" : "badge-fail")}>
+                        {predictor.projected >= 70 ? "On track to pass" : "Needs improvement"}
+                      </span>
+                    </span>
+                  )}
+                </div>
               </div>
-            ) : (
+            )}
+
+            {/* ── HOME ── */}
+            {tab === "home" && (
               <>
-                <div className="section-title">Score History</div>
-                <div className="history-chart">
-                  <div className="hc-title">Score over time</div>
-                  <div className="hc-bars">
-                    {userData.sessions.slice(-15).map((s, i) => (
-                      <div className="hc-bar-col" key={i}>
-                        <div className="hc-bar" style={{ height: `${Math.round((s.pct / 100) * 90)}px`, background: s.pct >= 70 ? "var(--success)" : s.pct >= 50 ? "var(--warning)" : "var(--danger)" }} />
-                        <div className="hc-bar-num">{s.pct}%</div>
+                {userData.sessions.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="es-icon">🌺</div>
+                    <p>Welcome! Tap <strong>Study</strong> below to take your first quiz. Your stats sync automatically across all your devices.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="section-title">Score History</div>
+                    <div className="history-chart">
+                      <div className="hc-title">Score over time</div>
+                      <div className="hc-bars">
+                        {userData.sessions.slice(-15).map((s, i) => (
+                          <div className="hc-bar-col" key={i}>
+                            <div className="hc-bar" style={{ height: Math.round((s.pct / 100) * 80) + "px", background: s.pct >= 70 ? "#27ae60" : s.pct >= 50 ? "#f39c12" : "#c0392b" }} />
+                            <div className="hc-bar-num">{s.pct}%</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: "0.65rem", color: "#6b7c93", marginTop: 6, textAlign: "right" }}>70% = passing</div>
+                    </div>
+                    <div className="section-title">Recent Sessions</div>
+                    {userData.sessions.slice(-5).reverse().map((s, i) => (
+                      <div className="session-item" key={i}>
+                        <div>
+                          <div className="session-title">{s.correct}/{s.total} correct</div>
+                          <div className="session-meta">{["Random","Growth","Easier","Spaced"][["random","growth","easier","spaced"].indexOf(s.mode)] || s.mode} · {new Date(s.date).toLocaleDateString()}</div>
+                        </div>
+                        <span className={"badge " + (s.pct >= 70 ? "badge-pass" : "badge-fail")}>{s.pct}%</span>
                       </div>
                     ))}
-                  </div>
-                  <div style={{ fontSize: "0.7rem", color: "var(--muted)", marginTop: 8, textAlign: "right" }}>70% = passing threshold</div>
-                </div>
-                <div className="section-title">Recent Sessions</div>
-                {userData.sessions.slice(-5).reverse().map((s, i) => (
-                  <div key={i} style={{ background: "white", borderRadius: 8, padding: "12px 16px", boxShadow: "0 2px 8px rgba(10,34,64,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <div>
-                      <div style={{ fontSize: "0.78rem", fontFamily: "'DM Serif Display', serif", color: "var(--ocean)" }}>{s.correct}/{s.total} correct</div>
-                      <div style={{ fontSize: "0.68rem", color: "var(--muted)" }}>{["Random", "Growth", "Easier", "Spaced"][["random", "growth", "easier", "spaced"].indexOf(s.mode)] || s.mode} · {new Date(s.date).toLocaleDateString()}</div>
-                    </div>
-                    <span className={`badge ${s.pct >= 70 ? "badge-pass" : "badge-fail"}`}>{s.pct}%</span>
-                  </div>
-                ))}
+                  </>
+                )}
               </>
             )}
-          </>
-        )}
 
-        {/* STUDY */}
-        {tab === "study" && !quizState && (
-          <>
-            <div className="section-title">Choose Your Mode</div>
-            <div className="mode-grid">
-              {[
-                { id: "random", icon: "🎲", name: "Random", desc: "Shuffled questions from the full pool. Great for general practice." },
-                { id: "growth", icon: "💪", name: "Growth", desc: "Targets your hardest questions. Face your weak spots head-on." },
-                { id: "easier", icon: "✅", name: "Easier", desc: "Focus on questions you already do well. Build your confidence." },
-                { id: "spaced", icon: "🔁", name: "Spaced Repetition", desc: "Leitner-system scheduling. Questions at the right moment." },
-              ].map(m => (
-                <div key={m.id} className={`mode-card ${selectedMode === m.id ? "selected" : ""}`} onClick={() => setSelectedMode(m.id)}>
-                  <div className="mode-icon">{m.icon}</div>
-                  <div className="mode-name">{m.name}</div>
-                  <div className="mode-desc">{m.desc}</div>
+            {/* ── STUDY ── */}
+            {tab === "study" && !quizState && (
+              <>
+                <div className="section-title">Choose Your Mode</div>
+                <div className="mode-grid">
+                  {[
+                    { id: "random", icon: "🎲", name: "Random", desc: "Shuffled questions from the full pool. Great for general practice." },
+                    { id: "growth", icon: "💪", name: "Growth", desc: "Targets your hardest questions. Face your weak spots head-on." },
+                    { id: "easier", icon: "✅", name: "Easier", desc: "Focus on questions you already do well. Build your confidence." },
+                    { id: "spaced", icon: "🔁", name: "Spaced Repetition", desc: "Leitner-system scheduling. Questions at the right moment." },
+                  ].map(m => (
+                    <div key={m.id} className={"mode-card" + (selectedMode === m.id ? " selected" : "")} onClick={() => setSelectedMode(m.id)}>
+                      <div className="mode-icon">{m.icon}</div>
+                      <div className="mode-name">{m.name}</div>
+                      <div className="mode-desc">{m.desc}</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            {selectedMode === "spaced" && (
+                {selectedMode === "spaced" && (
+                  <>
+                    <div className="section-title">Leitner Boxes</div>
+                    <div className="leitner-boxes">
+                      {["New","Day 1","Day 3","Day 7","Day 14","Day 30"].map((label, i) => (
+                        <div className="lbox" key={i} style={{ borderTopColor: i === 0 ? "#aaa" : i <= 2 ? "#f39c12" : "#27ae60" }}>
+                          <div className="lbox-num">{leitnerCounts[i] || 0}</div>
+                          <div className="lbox-label">{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <div className="start-quiz-row">
+                  <select className="q-count-select" value={quizCount} onChange={e => setQuizCount(Number(e.target.value))}>
+                    {[5,10,15,20,25,40].map(n => <option key={n} value={n}>{n} questions</option>)}
+                  </select>
+                  <button className="start-btn" onClick={startQuiz}>Start Quiz →</button>
+                </div>
+              </>
+            )}
+
+            {/* ── QUIZ ACTIVE ── */}
+            {tab === "quiz" && quizState && !quizState.done && (
+              <>
+                <div className="quiz-header">
+                  <div className="quiz-progress">
+                    {quizState.questions.map((_, i) => {
+                      let cls = "qp-dot";
+                      if (i < quizState.current) cls += quizState.answers[i]?.userAns === quizState.answers[i]?.ans ? " correct" : " wrong";
+                      else if (i === quizState.current) cls += " current";
+                      return <div key={i} className={cls} />;
+                    })}
+                  </div>
+                  <span style={{ fontSize: "0.75rem", color: "#6b7c93" }}>{quizState.current + 1} / {quizState.questions.length}</span>
+                </div>
+                <div className="question-card">
+                  <div className="question-num">Question {quizState.current + 1} · Manual p.{quizState.questions[quizState.current].page}</div>
+                  <div className="question-text">{quizState.questions[quizState.current].q}</div>
+                  <div className="options">
+                    {quizState.questions[quizState.current].opts.map((opt, i) => {
+                      const fb = quizState.feedback;
+                      const q = quizState.questions[quizState.current];
+                      let cls = "option-btn";
+                      if (fb !== null) {
+                        if (i === q.ans) cls += " correct";
+                        else if (i === fb.chosen) cls += " wrong";
+                      }
+                      return (
+                        <button key={i} className={cls} onClick={() => handleAnswer(i)} disabled={fb !== null}>
+                          <span className="opt-letter">{String.fromCharCode(65 + i)}.</span>
+                          {opt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {quizState.feedback && (
+                  <>
+                    <div className={"feedback-bar " + (quizState.feedback.correct ? "correct" : "wrong")}>
+                      {quizState.feedback.correct ? "✅ Correct!" : "❌ Incorrect — the correct answer is highlighted."}
+                    </div>
+                    <button className="next-btn" onClick={handleNext}>
+                      {quizState.current + 1 < quizState.questions.length ? "Next Question →" : "See Results →"}
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+
+            {/* ── RESULTS ── */}
+            {tab === "quiz" && quizState && quizState.done && (
+              <>
+                {(() => {
+                  const correct = quizState.answers.filter(a => a.userAns === a.ans).length;
+                  const pct = Math.round((correct / quizState.answers.length) * 100);
+                  const passed = pct >= 70;
+                  const missed = quizState.answers.filter(a => a.userAns !== a.ans);
+                  return (
+                    <div className="results-card">
+                      <div className="results-score">{pct}%</div>
+                      <div className={passed ? "results-pass" : "results-fail"}>
+                        {passed ? "🌺 Great job — you'd pass!" : "Keep studying — you'll get there!"}
+                      </div>
+                      <div className="results-meta">{correct} of {quizState.answers.length} correct</div>
+                      <div className="results-breakdown">
+                        <div>
+                          <div className={"res-stat-val res-correct"}>{correct}</div>
+                          <div className="res-stat-label">Correct</div>
+                        </div>
+                        <div>
+                          <div className={"res-stat-val res-wrong"}>{quizState.answers.length - correct}</div>
+                          <div className="res-stat-label">Incorrect</div>
+                        </div>
+                      </div>
+                      {missed.length > 0 && (
+                        <div className="missed-review">
+                          <div className="section-title">Review missed</div>
+                          {missed.map((a, i) => {
+                            const q = QUESTIONS.find(q => q.id === a.id);
+                            return (
+                              <div className="missed-q" key={i}>
+                                <strong>{q.q}</strong>
+                                <div className="missed-correct">✅ {q.opts[q.ans]}</div>
+                                <div className="missed-wrong">❌ You chose: {q.opts[a.userAns]}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="result-btns">
+                        <button className="next-btn" onClick={startQuiz}>Try Again</button>
+                        <button className="next-btn" style={{ background: "#2e7d32" }} onClick={() => { setQuizState(null); setTab("study"); }}>Change Mode</button>
+                        <button className="next-btn" style={{ background: "#e8622a" }} onClick={() => { setQuizState(null); setTab("home"); }}>Home</button>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+
+            {/* ── PERFORMANCE ── */}
+            {tab === "performance" && (
               <>
                 <div className="section-title">Leitner Boxes</div>
                 <div className="leitner-boxes">
-                  {["New", "Day 1", "Day 3", "Day 7", "Day 14", "Day 30"].map((label, i) => (
-                    <div className="lbox" key={i} style={{ borderTopColor: i === 0 ? "#aaa" : i <= 2 ? "var(--warning)" : "var(--success)" }}>
+                  {["New","Day 1","Day 3","Day 7","Day 14","Day 30"].map((label, i) => (
+                    <div className="lbox" key={i} style={{ borderTopColor: i === 0 ? "#aaa" : i <= 2 ? "#f39c12" : "#27ae60" }}>
                       <div className="lbox-num">{leitnerCounts[i] || 0}</div>
                       <div className="lbox-label">{label}</div>
                     </div>
                   ))}
                 </div>
-              </>
-            )}
-            <div className="start-quiz-section">
-              <select className="q-count-select" value={quizCount} onChange={e => setQuizCount(Number(e.target.value))}>
-                {[5, 10, 15, 20, 25, 40].map(n => <option key={n} value={n}>{n} questions</option>)}
-              </select>
-              <button className="next-btn" onClick={startQuiz}>Start Quiz →</button>
-            </div>
-          </>
-        )}
-
-        {/* QUIZ ACTIVE */}
-        {tab === "quiz" && quizState && !quizState.done && (() => {
-          const q = quizState.questions[quizState.current];
-          const fb = quizState.feedback;
-          return (
-            <>
-              <div className="quiz-header">
-                <div className="quiz-progress">
-                  {quizState.questions.map((_, i) => (
-                    <div key={i} className={`qp-dot ${i < quizState.current ? (quizState.answers[i]?.userAns === quizState.answers[i]?.ans ? "correct" : "wrong") : i === quizState.current ? "current" : ""}`} />
-                  ))}
-                </div>
-                <span style={{ fontSize: "0.78rem", color: "var(--muted)" }}>{quizState.current + 1} / {quizState.questions.length}</span>
-              </div>
-              <div className="question-card">
-                <div className="question-num">Question {quizState.current + 1} · Manual p.{q.page}</div>
-                <div className="question-text">{q.q}</div>
-                <div className="options">
-                  {q.opts.map((opt, i) => {
-                    let cls = "";
-                    if (fb !== null) { if (i === q.ans) cls = "correct"; else if (i === fb.chosen) cls = "wrong"; }
-                    return (
-                      <button key={i} className={`option-btn ${cls}`} onClick={() => handleAnswer(i)} disabled={fb !== null}>
-                        <span className="opt-letter">{String.fromCharCode(65 + i)}.</span>{opt}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              {fb && (
-                <>
-                  <div className={`feedback-bar ${fb.correct ? "correct" : "wrong"}`}>
-                    {fb.correct ? "✅ Correct!" : "❌ Incorrect — the correct answer is highlighted."}
+                {Object.keys(userData.questionStats).length === 0 ? (
+                  <div className="empty-state">
+                    <div className="es-icon">📊</div>
+                    <p>Complete at least one quiz to see your question-by-question stats.</p>
                   </div>
-                  <button className="next-btn" onClick={handleNext}>
-                    {quizState.current + 1 < quizState.questions.length ? "Next Question →" : "See Results →"}
-                  </button>
-                </>
-              )}
-            </>
-          );
-        })()}
-
-        {/* RESULTS */}
-        {tab === "quiz" && quizState?.done && (() => {
-          const correct = quizState.answers.filter(a => a.userAns === a.ans).length;
-          const pct = Math.round((correct / quizState.answers.length) * 100);
-          return (
-            <div className="results-card">
-              <div className="results-score">{pct}%</div>
-              <div className={pct >= 70 ? "results-pass" : "results-fail"}>{pct >= 70 ? "🌺 Great job — you'd pass!" : "Keep studying — you'll get there!"}</div>
-              <div className="results-meta">{correct} of {quizState.answers.length} correct</div>
-              <div className="results-breakdown">
-                <div className="res-stat"><div className="res-stat-val res-correct">{correct}</div><div className="res-stat-label">Correct</div></div>
-                <div className="res-stat"><div className="res-stat-val res-wrong">{quizState.answers.length - correct}</div><div className="res-stat-label">Incorrect</div></div>
-              </div>
-              {quizState.answers.filter(a => a.userAns !== a.ans).length > 0 && (
-                <div style={{ textAlign: "left", marginTop: 16 }}>
-                  <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: "0.95rem", color: "var(--ocean)", marginBottom: 10 }}>Review missed questions:</div>
-                  {quizState.answers.filter(a => a.userAns !== a.ans).map((a, i) => {
-                    const q = QUESTIONS.find(q => q.id === a.id);
-                    return (
-                      <div key={i} style={{ background: "#f8d7da", borderRadius: 8, padding: "10px 14px", marginBottom: 8, fontSize: "0.8rem" }}>
-                        <strong style={{ color: "#721c24" }}>{q.q}</strong>
-                        <div style={{ marginTop: 4, color: "#155724" }}>✅ {q.opts[q.ans]}</div>
-                        <div style={{ color: "#721c24" }}>❌ You chose: {q.opts[a.userAns]}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 12, marginTop: 20, marginBottom: 120, flexWrap: "wrap" }}>
-                <button className="next-btn" onClick={startQuiz}>Try Again</button>
-                <button className="next-btn" style={{ background: "var(--palm)" }} onClick={() => { setQuizState(null); setTab("study"); }}>Change Mode</button>
-                <button className="next-btn" style={{ background: "var(--coral)" }} onClick={() => { setQuizState(null); setTab("home"); }}>Home</button>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* PERFORMANCE */}
-        {tab === "performance" && (
-          <>
-            <div className="section-title">Question Performance</div>
-            {Object.keys(userData.questionStats).length === 0 ? (
-              <div className="empty-state">
-                <div className="es-icon">📊</div>
-                <p>Complete at least one quiz to see your question-by-question stats.</p>
-              </div>
-            ) : (
-              <>
-                <div className="section-title">Leitner Boxes</div>
-                <div className="leitner-boxes" style={{ marginBottom: 24 }}>
-                  {["New", "Day 1", "Day 3", "Day 7", "Day 14", "Day 30"].map((label, i) => (
-                    <div className="lbox" key={i} style={{ borderTopColor: i === 0 ? "#aaa" : i <= 2 ? "var(--warning)" : "var(--success)" }}>
-                      <div className="lbox-num">{leitnerCounts[i] || 0}</div>
-                      <div className="lbox-label">{label}</div>
+                ) : (
+                  <>
+                    <div className="section-title">All Questions</div>
+                    <div className="perf-grid">
+                      {QUESTIONS.map(q => {
+                        const s = userData.questionStats[q.id];
+                        if (!s) return null;
+                        const acc = s.attempts > 0 ? Math.round((s.correct / s.attempts) * 100) : 0;
+                        return (
+                          <div className="perf-item" key={q.id}>
+                            <div className="perf-q">{q.q.length > 65 ? q.q.slice(0, 65) + "…" : q.q}</div>
+                            <div className="perf-bar-wrap">
+                              <div className="perf-bar-fill" style={{ width: acc + "%", background: acc >= 70 ? "#27ae60" : acc >= 50 ? "#f39c12" : "#c0392b" }} />
+                            </div>
+                            <div className="perf-stats">
+                              <span>{s.correct}/{s.attempts}</span>
+                              <span>{acc}% · Box {s.box || 0}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
-                <div className="section-title">All Questions</div>
-                <div className="perf-grid">
-                  {QUESTIONS.map(q => {
-                    const s = userData.questionStats[q.id];
-                    if (!s) return null;
-                    const acc = s.attempts > 0 ? Math.round((s.correct / s.attempts) * 100) : 0;
-                    return (
-                      <div className="perf-item" key={q.id}>
-                        <div className="perf-q">{q.q.length > 70 ? q.q.slice(0, 70) + "…" : q.q}</div>
-                        <div className="perf-bar-wrap">
-                          <div className="perf-bar-fill" style={{ width: `${acc}%`, background: acc >= 70 ? "var(--success)" : acc >= 50 ? "var(--warning)" : "var(--danger)" }} />
-                        </div>
-                        <div className="perf-stats"><span>{s.correct}/{s.attempts} correct</span><span>{acc}% · Box {s.box || 0}</span></div>
-                      </div>
-                    );
-                  })}
-                </div>
+                  </>
+                )}
               </>
             )}
-          </>
-        )}
-      </div>
+
+          </div>{/* end .app */}
+        </div>{/* end .scroll-area */}
+
+        {/* ── BOTTOM NAV — outside scroll area, never overlaps ── */}
+        <div className="bottom-nav">
+          {navItems.map(t => (
+            <div
+              key={t.id}
+              className={"bn-item" + (tab === t.id || (t.id === "study" && tab === "quiz") ? " active" : "")}
+              onClick={() => { setQuizState(null); setTab(t.id); }}
+            >
+              <span className="bn-icon">{t.icon}</span>
+              {t.label}
+            </div>
+          ))}
+        </div>
+
+      </div>{/* end .shell */}
     </>
   );
 }
