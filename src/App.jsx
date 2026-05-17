@@ -747,6 +747,13 @@ export default function App() {
           </>
         )}
       </div>
+      <div className="bottom-nav">
+        {[{ id: "home", icon: "🏠", label: "Home" }, { id: "study", icon: "📖", label: "Study" }, { id: "performance", icon: "📊", label: "Stats" }].map(t => (
+          <div key={t.id} className={`bn-item ${tab === t.id || (t.id === "study" && tab === "quiz") ? "active" : ""}`} onClick={() => { if (t.id !== "quiz") { setTab(t.id); } }}>
+            <span className="bn-icon">{t.icon}</span>{t.label}
+          </div>
+        ))}
+      </div>
     </>
   );
 }
