@@ -275,7 +275,7 @@ const css = `
   .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); }
   .empty-state .es-icon { font-size: 3rem; margin-bottom: 12px; }
   .empty-state p { font-size: 0.85rem; line-height: 1.6; }
-  .start-quiz-section { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .start-quiz-section { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 120px; }
   .q-count-select { border: 2px solid #e8dcc8; border-radius: 8px; padding: 10px 14px; font-family: 'DM Mono', monospace; font-size: 0.82rem; background: white; color: var(--ocean); cursor: pointer; outline: none; }
   .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: var(--ocean); display: flex; justify-content: space-around; align-items: center; height: 60px; border-top: 2px solid var(--coral); z-index: 100; }
   .bn-item { display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; padding: 8px 16px; border-radius: 8px; transition: background var(--transition); color: rgba(245,230,200,0.5); font-size: 0.6rem; letter-spacing: 0.04em; text-transform: uppercase; }
@@ -539,7 +539,13 @@ export default function App() {
           </div>
         )}
 
-
+        <div className="bottom-nav">
+          {[{ id: "home", icon: "🏠", label: "Home" }, { id: "study", icon: "📖", label: "Study" }, { id: "performance", icon: "📊", label: "Stats" }].map(t => (
+            <div key={t.id} className={`bn-item ${tab === t.id || (t.id === "study" && tab === "quiz") ? "active" : ""}`} onClick={() => { if (t.id !== "quiz") { setTab(t.id); } }}>
+              <span className="bn-icon">{t.icon}</span>{t.label}
+            </div>
+          ))}
+        </div>
 
         {/* HOME */}
         {tab === "home" && (
@@ -690,7 +696,7 @@ export default function App() {
                   })}
                 </div>
               )}
-              <div style={{ display: "flex", gap: 12, marginTop: 20, marginBottom: 100, flexWrap: "wrap" }}
+              <div style={{ display: "flex", gap: 12, marginTop: 20, marginBottom: 120, flexWrap: "wrap" }}>
                 <button className="next-btn" onClick={startQuiz}>Try Again</button>
                 <button className="next-btn" style={{ background: "var(--palm)" }} onClick={() => { setQuizState(null); setTab("study"); }}>Change Mode</button>
                 <button className="next-btn" style={{ background: "var(--coral)" }} onClick={() => { setQuizState(null); setTab("home"); }}>Home</button>
@@ -740,14 +746,6 @@ export default function App() {
             )}
           </>
         )}
-      </div>
-
-        <div className="bottom-nav">
-        {[{ id: "home", icon: "🏠", label: "Home" }, { id: "study", icon: "📖", label: "Study" }, { id: "performance", icon: "📊", label: "Stats" }].map(t => (
-          <div key={t.id} className={`bn-item ${tab === t.id || (t.id === "study" && tab === "quiz") ? "active" : ""}`} onClick={() => { if (t.id !== "quiz") { setTab(t.id); } }}>
-            <span className="bn-icon">{t.icon}</span>{t.label}
-          </div>
-        ))}
       </div>
     </>
   );
