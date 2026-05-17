@@ -185,7 +185,7 @@ const css = `
   }
   html, body, #root { height: 100%; }
   body { font-family: 'DM Mono', monospace; background: var(--sand-light); color: var(--text); min-height: 100vh; }
-  .app { max-width: 900px; margin: 0 auto; padding: 0 16px 120px; min-height: 100vh; }
+  .app { max-width: 900px; margin: 0 auto; padding: 0 16px 160px; min-height: 100vh; }
   .header { background: var(--ocean); color: white; padding: 0 16px; position: sticky; top: 0; z-index: 100; border-bottom: 3px solid var(--coral); }
   .header-inner { max-width: 900px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; height: 60px; }
   .header-logo { font-family: 'DM Serif Display', serif; font-size: 1.2rem; display: flex; align-items: center; gap: 8px; }
@@ -690,7 +690,7 @@ export default function App() {
                   })}
                 </div>
               )}
-              <div style={{ display: "flex", gap: 12, marginTop: 20, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 12, marginTop: 20, marginBottom: 100, flexWrap: "wrap" }}
                 <button className="next-btn" onClick={startQuiz}>Try Again</button>
                 <button className="next-btn" style={{ background: "var(--palm)" }} onClick={() => { setQuizState(null); setTab("study"); }}>Change Mode</button>
                 <button className="next-btn" style={{ background: "var(--coral)" }} onClick={() => { setQuizState(null); setTab("home"); }}>Home</button>
