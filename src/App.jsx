@@ -183,9 +183,11 @@ const css = `
     --success: #27ae60; --danger: #c0392b; --warning: #f39c12;
     --radius: 12px; --shadow: 0 4px 24px rgba(10,34,64,0.18); --transition: 0.2s cubic-bezier(0.4,0,0.2,1);
   }
-  html, body, #root { height: 100%; } body { padding-bottom: 80px !important; }
-  body { font-family: 'DM Mono', monospace; background: var(--sand-light); color: var(--text); min-height: 100vh; }
-  .app { max-width: 900px; margin: 0 auto; padding: 0 16px 200px; min-height: 100vh; }
+  html, body, #root { height: 100%; margin: 0; padding: 0; }
+  body { font-family: 'DM Mono', monospace; background: var(--sand-light); color: var(--text); display: flex; flex-direction: column; min-height: 100vh; }
+  #root { display: flex; flex-direction: column; flex: 1; }
+  .page-wrap { flex: 1; overflow-y: auto; padding-bottom: 80px; }
+  .app { max-width: 900px; margin: 0 auto; padding: 0 16px 40px; }
   .header { background: var(--ocean); color: white; padding: 0 16px; position: sticky; top: 0; z-index: 100; border-bottom: 3px solid var(--coral); }
   .header-inner { max-width: 900px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; height: 60px; }
   .header-logo { font-family: 'DM Serif Display', serif; font-size: 1.2rem; display: flex; align-items: center; gap: 8px; }
@@ -277,7 +279,7 @@ const css = `
   .empty-state p { font-size: 0.85rem; line-height: 1.6; }
   .start-quiz-section { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 120px; }
   .q-count-select { border: 2px solid #e8dcc8; border-radius: 8px; padding: 10px 14px; font-family: 'DM Mono', monospace; font-size: 0.82rem; background: white; color: var(--ocean); cursor: pointer; outline: none; }
-.bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: var(--ocean); display: flex; justify-content: space-around; align-items: center; height: 60px; border-top: 2px solid var(--coral); z-index: 10; }
+  .bottom-nav { position: sticky; bottom: 0; left: 0; right: 0; background: var(--ocean); display: flex; justify-content: space-around; align-items: center; height: 60px; border-top: 2px solid var(--coral); z-index: 10; flex-shrink: 0; }
   .bn-item { display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; padding: 8px 16px; border-radius: 8px; transition: background var(--transition); color: rgba(245,230,200,0.5); font-size: 0.6rem; letter-spacing: 0.04em; text-transform: uppercase; }
   .bn-item:hover { background: rgba(255,255,255,0.08); }
   .bn-item.active { color: var(--sand); }
@@ -489,7 +491,7 @@ export default function App() {
         </div>
       </div>
 
-      <div className="app">
+      <div className="page-wrap"><div className="app">
         <div className="stats-row">
           {[
             { label: "Sessions", value: userData.sessions.length, sub: "total quizzes taken" },
@@ -538,6 +540,14 @@ export default function App() {
             </div>
           </div>
         )}
+
+        <div className="bottom-nav">
+          {[{ id: "home", icon: "🏠", label: "Home" }, { id: "study", icon: "📖", label: "Study" }, { id: "performance", icon: "📊", label: "Stats" }].map(t => (
+            <div key={t.id} className={`bn-item ${tab === t.id || (t.id === "study" && tab === "quiz") ? "active" : ""}`} onClick={() => { if (t.id !== "quiz") { setTab(t.id); } }}>
+              <span className="bn-icon">{t.icon}</span>{t.label}
+            </div>
+          ))}
+        </div>
 
         {/* HOME */}
         {tab === "home" && (
@@ -738,13 +748,6 @@ export default function App() {
             )}
           </>
         )}
-      </div>
-      <div className="bottom-nav">
-        {[{ id: "home", icon: "🏠", label: "Home" }, { id: "study", icon: "📖", label: "Study" }, { id: "performance", icon: "📊", label: "Stats" }].map(t => (
-          <div key={t.id} className={`bn-item ${tab === t.id || (t.id === "study" && tab === "quiz") ? "active" : ""}`} onClick={() => { if (t.id !== "quiz") { setTab(t.id); } }}>
-            <span className="bn-icon">{t.icon}</span>{t.label}
-          </div>
-        ))}
       </div>
     </>
   );
